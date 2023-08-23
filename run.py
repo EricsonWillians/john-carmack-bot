@@ -1,3 +1,5 @@
+import os
+from tqdm import tqdm
 from langchain.llms import LlamaCpp
 from langchain import PromptTemplate, LLMChain
 from langchain.callbacks.manager import CallbackManager
@@ -28,6 +30,24 @@ def split_document_with_sliding_window(document_list, window_size=512, overlap=1
 
     return chunks
 
+def process_repository(directory_path, file_types=(".cpp", ".h", ".txt")):
+    all_content = []
+
+    for subdir, dirs, files in os.walk(directory_path):
+        for file in files:
+            if file.endswith(file_types):  # Filtering text-based files
+                with open(os.path.join(subdir, file), 'r', errors='replace') as f:
+                    content = f.read()
+                    all_content.append(content)
+
+    # Given that there's no "Document" type mentioned for the source code, 
+    # you can just treat the content as a single "pseudo-document" with joined content
+    combined_text = "\n".join(all_content)
+    source_document = type(document_content[0])(page_content=combined_text)  # Using the type of your existing documents
+    
+    # Now, you can reuse the split_document_with_sliding_window function
+    return split_document_with_sliding_window([source_document])
+
 
 # Load content
 loader = PyPDFLoader("contexts/gebbdoom.pdf")
@@ -35,6 +55,10 @@ document_content = loader.load_and_split()
 
 # Split the documents using the sliding window approach
 document_chunks = split_document_with_sliding_window(document_content)
+
+# Process gzdoom repository content
+repository_chunks = process_repository("./gzdoom/")
+document_chunks.extend(repository_chunks)
 
 # Set up LLM and other configurations
 callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
@@ -44,20 +68,20 @@ n_ctx = 2048
 max_tokens = 512
 llm = LlamaCpp(
     model_path="./models/llama-2-7b-chat.ggmlv3.q4_0.bin",
-    temperature=0.75,
+    temperature=1,
     max_tokens=max_tokens,
     n_gpu_layers=n_gpu_layers,
     n_batch=n_batch,
     n_ctx=n_ctx,
     callback_manager=callback_manager,
-    verbose=True,
+    verbose=False,
 )
 
 chain = load_summarize_chain(llm, chain_type="stuff")
 
 # Summarize each document chunk using the chain
 summaries = []
-for doc_chunk in document_chunks:
+for doc_chunk in tqdm(document_chunks, desc="Summarizing Chunks"):
     try:
         if hasattr(doc_chunk, 'page_content') and doc_chunk.page_content:
             summary = chain.run(doc_chunk)
@@ -68,21 +92,35 @@ for doc_chunk in document_chunks:
 
 # Process chunks
 MAX_TOKENS_PER_CHUNK = 500
-prompt = "Question: How the Doom renderer works?"
-responses = []
-
-for doc_chunk in document_chunks:
+# Interactive session
+print("\nWelcome to the interactive chatbot! Type 'exit' to end the session.\n")
+while True:
+    prompt = input("\nPlease enter your question: ")
     
-    chunk_text = doc_chunk.page_content
-    tokens = chunk_text.split()
-    
-    if len(tokens) > MAX_TOKENS_PER_CHUNK:
-        tokens = tokens[:MAX_TOKENS_PER_CHUNK]
-        chunk_text = " ".join(tokens)
+    if prompt.lower() == 'exit':
+        break
 
-    # Combine the chunk with the prompt so LLM understands what to do with the chunk.
-    chunk_with_prompt = chunk_text + "\n" + prompt
-    response = llm(chunk_with_prompt)
-    responses.append(response)
+    responses = []
+    for doc_chunk in tqdm(document_chunks, desc="Processing Chunks"):
+        chunk_text = doc_chunk.page_content
+        tokens = chunk_text.split()
 
-# Post-process the responses as needed.
+        if len(tokens) > MAX_TOKENS_PER_CHUNK:
+            tokens = tokens[:MAX_TOKENS_PER_CHUNK]
+            chunk_text = " ".join(tokens)
+
+        chunk_with_prompt = chunk_text + "\n\n" + prompt
+        response = llm(chunk_with_prompt)
+        
+        # If LLM asks for guidance, interactively get input from user
+        if "?" in response:
+            print(f"LLM Response: {response}")
+            guidance = input("\nPlease provide further guidance or clarification: ")
+            chunk_with_prompt += "\nGuidance: " + guidance
+            response = llm(chunk_with_prompt)
+
+        responses.append(response)
+
+    # Print all the responses or handle them as you wish
+    for resp in responses:
+        print(resp)
