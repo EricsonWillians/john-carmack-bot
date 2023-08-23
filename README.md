@@ -22,7 +22,7 @@ The provided script performs the following tasks:
 
 ## Code Example
 
-\```python
+```python
 # Summarize each document chunk using the chain
 summaries = []
 for doc_chunk in document_chunks:
@@ -38,7 +38,7 @@ for doc_chunk in document_chunks:
 MAX_TOKENS_PER_CHUNK = 500
 prompt = "Question: How the Doom renderer works?"
 responses = []
-\```
+```
 
 ## Getting Started
 
